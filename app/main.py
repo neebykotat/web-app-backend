@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -42,4 +43,26 @@ def read_users(name: str | None = None, age: int | None = None):
             "name": name,
             "age": age
         }
+    }
+
+#САМОСТОЯТЕЛЬНАЯ №2
+@app.get("/status")
+def get_status():
+    return {
+        "status": "working",
+        "application_name": os.getenv("APP_NAME", "FluffyHost API")
+    }
+
+class Item(BaseModel):
+    name: str
+    price: float
+    tax: float | None = None
+
+@app.post("/items/")
+def create_item(item: Item):
+    item_tax = item.tax if item.tax is not None else 0.0
+    total_price = item.price + item.tax
+    return {
+        "item": item,
+        "total_price": total_price
     }
