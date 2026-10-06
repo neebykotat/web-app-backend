@@ -4,7 +4,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from database import Base, SYNC_DATABASE_URL
-from models import User, Pet
+from models import User, Pet, Booking
 
 config = context.config
 
