@@ -79,9 +79,19 @@ def create_item(item: Item):
 async def read_pets(
         skip: int = 0,
         limit: int = 10,
+        search: str | None = None,
+        pet_type: str | None = None,
         db: AsyncSession = Depends(get_db)
 ):
-    result = await db.execute(select(models.Pet).offset(skip).limit(limit))
+    query = select(models.Pet)
+
+    if search:
+        query = query.where(models.Pet.name.contains(search))
+
+    if pet_type:
+        query = query.where(models.Pet.type == pet_type)
+
+    result = await db.execute(query.offset(skip).limit(limit))
     pets = result.scalars().all()
     return pets
 
