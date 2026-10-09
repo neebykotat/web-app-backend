@@ -1,7 +1,14 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, status
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from typing import List
+
+from database import get_db
+import models
+import app.schemas as schemas
 
 load_dotenv()
 
@@ -66,3 +73,48 @@ def create_item(item: Item):
         "item": item,
         "total_price": total_price
     }
+
+#ПРАКТИЧЕСКАЯ №4
+@app.get("/pets/", response_model=List[schemas.PetResponse], tags=["Pets"])
+async def read_pets(
+        skip: int = 0,
+        limit: int = 10,
+        db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(models.Pet).offset(skip).limit(limit))
+    pets = result.scalars().all()
+    return pets
+
+@app.get("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
+async def read_pet(pet_id: int, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
+    pet = result.scalar_one_or_none()
+
+    if pet is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pet with id {pet_id} not found"
+        )
+    return pet
+
+@app.post("/pets/", response_model=schemas.PetResponse, status_code=status.HTTP_201_CREATED, tags=["Pets"])
+async def create_pet(pet: schemas.PetCreate, db: AsyncSession = Depends(get_db)):
+    user_result = await db.execute(select(models.User).where(models.User.id == 1))
+    user_exists = user_result.scalar_one_or_none()
+
+    if not user_exists:
+        default_user = models.User(
+            id=1,
+            email="default@example.com",
+            hashed_password="default_hash",
+            full_name="Тестовый Хозяин",
+            is_sitter=False
+        )
+        db.add(default_user)
+        await db.flush()
+
+    db_pet = models.Pet(**pet.model_dump(), owner_id=1)
+    db.add(db_pet)
+    await db.commit()
+    await db.refresh(db_pet)
+    return db_pet
