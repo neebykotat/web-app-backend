@@ -90,7 +90,7 @@ async def read_pets(
         pet_type: str | None = None,
         db: AsyncSession = Depends(get_db)
 ):
-    query = select(models.Pet)
+    query = select(models.Pet).where(models.Pet.is_active == True)
 
     if search:
         query = query.where(models.Pet.name.contains(search))
@@ -104,7 +104,7 @@ async def read_pets(
 
 @app.get("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
 async def read_pet(pet_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
+    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id, models.Pet.is_active == True))
     pet = result.scalar_one_or_none()
 
     if pet is None:
@@ -138,11 +138,17 @@ async def create_pet(pet: schemas.PetCreate, db: AsyncSession = Depends(get_db))
 
 # Практическая №5
 @app.put("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
-async def update_pet(pet_id: int, pet_data: schemas.PetUpdate, db: AsyncSession = Depends(get_db)):
+async def update_pet(pet_id: int, pet_data: schemas.PetUpdate, user_id: int, is_admin: bool = False, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
     db_pet = result.scalar_one_or_none()
     if db_pet is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pet with id {pet_id} not found")
+
+    if db_pet.owner_id != user_id and not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="У вас нет прав на редактирование этого питомца. Доступно только автору или администратору."
+        )
 
     for key, value in pet_data.model_dump().items():
         setattr(db_pet, key, value)
@@ -153,11 +159,17 @@ async def update_pet(pet_id: int, pet_data: schemas.PetUpdate, db: AsyncSession 
 
 
 @app.patch("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
-async def partial_update_pet(pet_id: int, pet_data: schemas.PetPartialUpdate, db: AsyncSession = Depends(get_db)):
+async def partial_update_pet(pet_id: int, pet_data: schemas.PetPartialUpdate,  user_id: int, is_admin: bool = False, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
     db_pet = result.scalar_one_or_none()
     if db_pet is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pet with id {pet_id} not found")
+
+    if db_pet.owner_id != user_id and not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="У вас нет прав на редактирование этого питомца. Доступно только автору или администратору."
+        )
 
     update_fields = pet_data.model_dump(exclude_unset=True)
     for key, value in update_fields.items():
@@ -169,14 +181,45 @@ async def partial_update_pet(pet_id: int, pet_data: schemas.PetPartialUpdate, db
 
 
 @app.delete("/pets/{pet_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Pets"])
-async def delete_pet(pet_id: int, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
+async def delete_pet(pet_id: int, user_id: int, is_admin: bool = False, background_tasks: BackgroundTasks = BackgroundTasks(), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id, models.Pet.is_active == True))
     db_pet = result.scalar_one_or_none()
     if db_pet is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pet with id {pet_id} not found")
 
-    await db.delete(db_pet)
+    if db_pet.owner_id != user_id and not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="У вас нет прав на удаление этого питомца. Доступно только автору или администратору."
+        )
+
+    db_pet.is_active = False
     await db.commit()
 
     background_tasks.add_task(log_deletion_activity, pet_id)
     return None
+
+
+@app.post("/pets/{pet_id}/restore", response_model=schemas.PetResponse, tags=["Pets"])
+async def restore_pet(pet_id: int, is_admin: bool = False, db: AsyncSession = Depends(get_db)
+):
+    if not is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ запрещен. Восстановление удаленных питомцев доступно только администратору."
+        )
+
+    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id, models.Pet.is_active == False))
+    db_pet = result.scalar_one_or_none()
+
+    if db_pet is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Deleted pet with ID {pet_id} not found or already activate"
+        )
+
+    db_pet.is_active = True
+    await db.commit()
+    await db.refresh(db_pet)
+    return db_pet
+
