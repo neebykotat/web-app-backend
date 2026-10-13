@@ -1,5 +1,6 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, status
+import logging
+from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,12 @@ app = FastAPI(
     description="Автоматизированная веб-платформа индивидуальной передержки домашних животных на основе услуг догситтеров",
     version="0.2.0"
 )
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("FluffyHostAPI")
+
+def log_deletion_activity(pet_id: int):
+    logger.info(f" [BACKGROUND TASK] Запись питомца с ID {pet_id} была успешно удалена из базы данных.")
 
 #ПРАКТИЧЕСКАЯ №1
 @app.get("/")
@@ -128,3 +135,48 @@ async def create_pet(pet: schemas.PetCreate, db: AsyncSession = Depends(get_db))
     await db.commit()
     await db.refresh(db_pet)
     return db_pet
+
+# Практическая №5
+@app.put("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
+async def update_pet(pet_id: int, pet_data: schemas.PetUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
+    db_pet = result.scalar_one_or_none()
+    if db_pet is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pet with id {pet_id} not found")
+
+    for key, value in pet_data.model_dump().items():
+        setattr(db_pet, key, value)
+
+    await db.commit()
+    await db.refresh(db_pet)
+    return db_pet
+
+
+@app.patch("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
+async def partial_update_pet(pet_id: int, pet_data: schemas.PetPartialUpdate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
+    db_pet = result.scalar_one_or_none()
+    if db_pet is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pet with id {pet_id} not found")
+
+    update_fields = pet_data.model_dump(exclude_unset=True)
+    for key, value in update_fields.items():
+        setattr(db_pet, key, value)
+
+    await db.commit()
+    await db.refresh(db_pet)
+    return db_pet
+
+
+@app.delete("/pets/{pet_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Pets"])
+async def delete_pet(pet_id: int, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
+    db_pet = result.scalar_one_or_none()
+    if db_pet is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pet with id {pet_id} not found")
+
+    await db.delete(db_pet)
+    await db.commit()
+
+    background_tasks.add_task(log_deletion_activity, pet_id)
+    return None

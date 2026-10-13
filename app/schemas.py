@@ -16,3 +16,17 @@ class PetResponse(PetBase):
     owner_id: int
 
     model_config = ConfigDict(from_attributes=True)
+
+class PetUpdate(BaseModel):
+    name: str
+    type: str
+    breed: Optional[str] = None
+    age: int
+    description: Optional[str] = None
+
+class PetPartialUpdate(BaseModel):
+    name: Optional[str] = None
+    type: Optional[str] = None
+    breed: Optional[str] = None
+    age: Optional[int] = None
+    description: Optional[str] = None
