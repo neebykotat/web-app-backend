@@ -33,6 +33,7 @@ class Pet(Base):
 
     owner = relationship("User", back_populates="pets")
     bookings = relationship("Booking", back_populates="pet", cascade="all, delete-orphan")
+    is_active = Column(Boolean, default=True, nullable=False)
 
 class Booking(Base):
     __tablename__ = "bookings"
