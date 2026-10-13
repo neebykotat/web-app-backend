@@ -102,3 +102,59 @@ async def test_read_pet_not_found(ac: AsyncClient):
     response = await ac.get("/pets/99999")
     assert response.status_code == 404
     assert response.json()["detail"] == "Pet with id 99999 not found"
+
+# Тесты самостоятельная работа №5
+@pytest.mark.anyio
+async def test_update_pet_as_owner_success(ac: AsyncClient):
+    payload = {
+        "name": "Рекс Обновленный",
+        "type": "Собака",
+        "breed": "Овчарка",
+        "age": 5,
+        "description": "Теперь знает команды"
+    }
+    response = await ac.put("/pets/1?user_id=1&is_admin=false", json=payload)
+    assert response.status_code == 200
+    assert response.json()["name"] == "Рекс Обновленный"
+    assert response.json()["age"] == 5
+
+@pytest.mark.anyio
+async def test_update_pet_forbidden(ac: AsyncClient):
+    payload = {
+        "name": "Взлом",
+        "type": "Собака",
+        "age": 10
+    }
+    response = await ac.put("/pets/1?user_id=2&is_admin=false", json=payload)
+    assert response.status_code == 403
+
+@pytest.mark.anyio
+async def test_partial_update_pet_as_admin_success(ac: AsyncClient):
+    payload = {
+        "age": 6
+    }
+    response = await ac.patch("/pets/1?user_id=999&is_admin=true", json=payload)
+    assert response.status_code == 200
+    assert response.json()["age"] == 6
+
+@pytest.mark.anyio
+async def test_delete_pet_forbidden(ac: AsyncClient):
+    response = await ac.delete("/pets/1?user_id=3&is_admin=false")
+    assert response.status_code == 403
+
+@pytest.mark.anyio
+async def test_delete_pet_owner_success(ac: AsyncClient):
+    response = await ac.delete("/pets/1?user_id=1&is_admin=false")
+    assert response.status_code == 204
+
+@pytest.mark.anyio
+async def test_restore_pet_forbidden(ac: AsyncClient):
+    response = await ac.post("/pets/1/restore?is_admin=false")
+    assert response.status_code == 403
+
+@pytest.mark.anyio
+async def test_restore_pet_admin_success(ac: AsyncClient):
+    response = await ac.post("/pets/1/restore?is_admin=true")
+    assert response.status_code == 200
+    assert response.json()["id"] == 1
+    assert "name" in response.json()
