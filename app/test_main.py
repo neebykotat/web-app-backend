@@ -158,3 +158,45 @@ async def test_restore_pet_admin_success(ac: AsyncClient):
     assert response.status_code == 200
     assert response.json()["id"] == 1
     assert "name" in response.json()
+
+# Тесты самостоятельная 6
+
+@pytest.mark.anyio
+async def test_create_pet_with_tags_success(ac: AsyncClient):
+    """Проверка создания питомца сразу со списком вложенных тегов"""
+    payload = {
+        "name": "Шарик",
+        "type": "Собака",
+        "breed": "Лабрадор",
+        "age": 2,
+        "description": "Очень дружелюбный пес",
+        "tags": ["Привит", "Активный"]
+    }
+    response = await ac.post("/pets/", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+    assert "tags" in data
+    assert len(data["tags"]) == 2
+    assert data["tags"][0]["name"] in ["Привит", "Активный"]
+
+
+@pytest.mark.anyio
+async def test_get_user_pets_endpoint(ac: AsyncClient):
+    """Проверка получения списка питомцев конкретного пользователя"""
+    response = await ac.get("/users/1/pets")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+
+@pytest.mark.anyio
+async def test_partial_update_tags_via_patch(ac: AsyncClient):
+    """Проверка обновления/добавления тегов к питомцу через PATCH"""
+    payload = {
+        "tags": ["Кастрирован", "Спокойный"]
+    }
+    response = await ac.patch("/pets/1?user_id=1&is_admin=false", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert "tags" in data
+    assert len(data["tags"]) == 2
+    assert data["tags"][0]["name"] in ["Кастрирован", "Спокойный"]

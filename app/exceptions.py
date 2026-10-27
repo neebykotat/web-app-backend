@@ -23,3 +23,10 @@ class PetRestoreError(DomainException):
     def __init__(self, pet_id: int):
         self.pet_id = pet_id
         self.message = f"Удаленный питомец с ID {pet_id} не найден или уже активен."
+
+
+class TagNotFoundError(DomainException):
+    """Исключение, если тег не найден"""
+    def __init__(self, tag_id: int):
+        self.tag_id = tag_id
+        self.message = f"Тег с ID {tag_id} не найден."

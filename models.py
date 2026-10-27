@@ -1,9 +1,17 @@
 from datetime import datetime
 from typing import List, Optional
-from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, Text
+from sqlalchemy import String, Integer, Boolean, DateTime, ForeignKey, Text, Table, Column
 from sqlalchemy.sql import func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from database import Base
+
+
+pet_tags = Table(
+    "pet_tags",
+    Base.metadata,
+    Column("pet_id", Integer, ForeignKey("pets.id", ondelete="CASCADE"), primary_key=True),
+    Column("tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class User(Base):
@@ -35,6 +43,27 @@ class Pet(Base):
 
     owner: Mapped["User"] = relationship("User", back_populates="pets")
     bookings: Mapped[List["Booking"]] = relationship("Booking", back_populates="pet", cascade="all, delete-orphan")
+
+    tags: Mapped[List["Tag"]] = relationship(
+        "Tag",
+        secondary=pet_tags,
+        back_populates="pets",
+        lazy="selectin"
+    )
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False, index=True)
+
+    pets: Mapped[List["Pet"]] = relationship(
+        "Pet",
+        secondary=pet_tags,
+        back_populates="tags",
+        lazy="selectin"
+    )
 
 
 class Booking(Base):

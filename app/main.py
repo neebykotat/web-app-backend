@@ -9,7 +9,7 @@ from typing import List
 from database import get_db
 import app.schemas as schemas
 from app.services import get_pet_service
-from app.exceptions import PetNotFoundError, PetAccessDeniedError, PetRestoreError
+from app.exceptions import PetNotFoundError, PetAccessDeniedError, PetRestoreError, TagNotFoundError
 
 load_dotenv()
 
@@ -146,4 +146,28 @@ async def restore_pet(pet_id: int, is_admin: bool = False, service=Depends(pet_s
             detail="Доступ запрещен. Восстановление удаленных питомцев доступно только администратору."
         )
     except PetRestoreError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+
+# ПРАКТИЧЕСКАЯ 6 + САМОСТОЯТЕЛЬНАЯ 6
+@app.get("/users/{user_id}/pets", response_model=List[schemas.PetResponse], tags=["Relations"])
+async def read_user_pets(user_id: int, service=Depends(pet_service_factory)):
+    """Получить всех питомцев конкретного пользователя"""
+    return await service.get_user_pets(user_id)
+
+
+@app.get("/pets/{pet_id}/tags", response_model=List[schemas.TagResponse], tags=["Relations"])
+async def read_pet_tags(pet_id: int, service=Depends(pet_service_factory)):
+    """Получить теги конкретного питомца"""
+    try:
+        return await service.get_pet_tags(pet_id)
+    except PetNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+
+
+@app.get("/tags/{tag_id}/pets", response_model=List[schemas.PetResponse], tags=["Relations"])
+async def read_tag_pets(tag_id: int, service=Depends(pet_service_factory)):
+    """Получить всех питомцев с указанным тегом"""
+    try:
+        return await service.get_pets_by_tag(tag_id)
+    except TagNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)

@@ -1,19 +1,35 @@
 from pydantic import BaseModel, ConfigDict
-from typing import Optional
+from typing import Optional, List
 
+#Схемы тегов
+class TagBase(BaseModel):
+    name: str
+
+
+class TagCreate(TagBase):
+    pass
+
+
+class TagResponse(TagBase):
+    id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+#Схемы питомцев
 class PetBase(BaseModel):
     name: str
-    type: str  # Собака, кошка и т.д.
+    type: str
     breed: Optional[str] = None
     age: int
     description: Optional[str] = None
 
 class PetCreate(PetBase):
-    pass
+    tags: Optional[List[str]] = []
 
 class PetResponse(PetBase):
     id: int
     owner_id: int
+    tags: List[TagResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -30,3 +46,4 @@ class PetPartialUpdate(BaseModel):
     breed: Optional[str] = None
     age: Optional[int] = None
     description: Optional[str] = None
+    tags: Optional[List[str]] = None
