@@ -4,12 +4,12 @@ from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 from typing import List
 
 from database import get_db
-import models
 import app.schemas as schemas
+from app.services import get_pet_service
+from app.exceptions import PetNotFoundError, PetAccessDeniedError, PetRestoreError
 
 load_dotenv()
 
@@ -24,6 +24,9 @@ logger = logging.getLogger("FluffyHostAPI")
 
 def log_deletion_activity(pet_id: int):
     logger.info(f" [BACKGROUND TASK] Запись питомца с ID {pet_id} была успешно удалена из базы данных.")
+
+async def pet_service_factory(db: AsyncSession = Depends(get_db)):
+    return get_pet_service(db)
 
 #ПРАКТИЧЕСКАЯ №1
 @app.get("/")
@@ -75,151 +78,72 @@ class Item(BaseModel):
 @app.post("/items/")
 def create_item(item: Item):
     item_tax = item.tax if item.tax is not None else 0.0
-    total_price = item.price + item.tax
+    total_price = item.price + item_tax
     return {
         "item": item,
         "total_price": total_price
     }
 
-#ПРАКТИЧЕСКАЯ №4
+#ПРАКТИЧЕСКАЯ №4 (ПЕРЕРАБОТАНА НА СЕРВИСЫ)
 @app.get("/pets/", response_model=List[schemas.PetResponse], tags=["Pets"])
 async def read_pets(
         skip: int = 0,
         limit: int = 10,
         search: str | None = None,
         pet_type: str | None = None,
-        db: AsyncSession = Depends(get_db)
+        service=Depends(pet_service_factory)
 ):
-    query = select(models.Pet).where(models.Pet.is_active == True)
-
-    if search:
-        query = query.where(models.Pet.name.contains(search))
-
-    if pet_type:
-        query = query.where(models.Pet.type == pet_type)
-
-    result = await db.execute(query.offset(skip).limit(limit))
-    pets = result.scalars().all()
-    return pets
+    return await service.get_pets(skip=skip, limit=limit, search=search, pet_type=pet_type)
 
 @app.get("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
-async def read_pet(pet_id: int, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id, models.Pet.is_active == True))
-    pet = result.scalar_one_or_none()
-
-    if pet is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Pet with id {pet_id} not found"
-        )
-    return pet
+async def read_pet(pet_id: int, service=Depends(pet_service_factory)):
+    try:
+        return await service.get_pet_by_id(pet_id)
+    except PetNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
 
 @app.post("/pets/", response_model=schemas.PetResponse, status_code=status.HTTP_201_CREATED, tags=["Pets"])
-async def create_pet(pet: schemas.PetCreate, db: AsyncSession = Depends(get_db)):
-    user_result = await db.execute(select(models.User).where(models.User.id == 1))
-    user_exists = user_result.scalar_one_or_none()
+async def create_pet(pet: schemas.PetCreate, service=Depends(pet_service_factory)):
+    return await service.create_pet(pet)
 
-    if not user_exists:
-        default_user = models.User(
-            id=1,
-            email="default@example.com",
-            hashed_password="default_hash",
-            full_name="Тестовый Хозяин",
-            is_sitter=False
-        )
-        db.add(default_user)
-        await db.flush()
-
-    db_pet = models.Pet(**pet.model_dump(), owner_id=1)
-    db.add(db_pet)
-    await db.commit()
-    await db.refresh(db_pet)
-    return db_pet
-
-# Практическая №5
+# ПРАКТИЧЕСКАЯ №5 (ПЕРЕРАБОТАНА НА СЕРВИСЫ)
 @app.put("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
-async def update_pet(pet_id: int, pet_data: schemas.PetUpdate, user_id: int, is_admin: bool = False, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
-    db_pet = result.scalar_one_or_none()
-    if db_pet is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pet with id {pet_id} not found")
-
-    if db_pet.owner_id != user_id and not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="У вас нет прав на редактирование этого питомца. Доступно только автору или администратору."
-        )
-
-    for key, value in pet_data.model_dump().items():
-        setattr(db_pet, key, value)
-
-    await db.commit()
-    await db.refresh(db_pet)
-    return db_pet
-
+async def update_pet(pet_id: int, pet_data: schemas.PetUpdate, user_id: int, is_admin: bool = False, service=Depends(pet_service_factory)):
+    try:
+        return await service.update_pet(pet_id, pet_data, user_id, is_admin)
+    except PetNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+    except PetAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
 
 @app.patch("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
-async def partial_update_pet(pet_id: int, pet_data: schemas.PetPartialUpdate,  user_id: int, is_admin: bool = False, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id))
-    db_pet = result.scalar_one_or_none()
-    if db_pet is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pet with id {pet_id} not found")
-
-    if db_pet.owner_id != user_id and not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="У вас нет прав на редактирование этого питомца. Доступно только автору или администратору."
-        )
-
-    update_fields = pet_data.model_dump(exclude_unset=True)
-    for key, value in update_fields.items():
-        setattr(db_pet, key, value)
-
-    await db.commit()
-    await db.refresh(db_pet)
-    return db_pet
-
+async def partial_update_pet(pet_id: int, pet_data: schemas.PetPartialUpdate, user_id: int, is_admin: bool = False, service=Depends(pet_service_factory)):
+    try:
+        return await service.partial_update_pet(pet_id, pet_data, user_id, is_admin)
+    except PetNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+    except PetAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
 
 @app.delete("/pets/{pet_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Pets"])
-async def delete_pet(pet_id: int, user_id: int, is_admin: bool = False, background_tasks: BackgroundTasks = BackgroundTasks(), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id, models.Pet.is_active == True))
-    db_pet = result.scalar_one_or_none()
-    if db_pet is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pet with id {pet_id} not found")
-
-    if db_pet.owner_id != user_id and not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="У вас нет прав на удаление этого питомца. Доступно только автору или администратору."
-        )
-
-    db_pet.is_active = False
-    await db.commit()
-
-    background_tasks.add_task(log_deletion_activity, pet_id)
-    return None
-
+async def delete_pet(pet_id: int, user_id: int, is_admin: bool = False, background_tasks: BackgroundTasks = BackgroundTasks(), service=Depends(pet_service_factory)):
+    try:
+        await service.delete_pet(pet_id, user_id, is_admin)
+        background_tasks.add_task(log_deletion_activity, pet_id)
+        return None
+    except PetNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+    except PetAccessDeniedError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
 
 @app.post("/pets/{pet_id}/restore", response_model=schemas.PetResponse, tags=["Pets"])
-async def restore_pet(pet_id: int, is_admin: bool = False, db: AsyncSession = Depends(get_db)
-):
-    if not is_admin:
+async def restore_pet(pet_id: int, is_admin: bool = False, service=Depends(pet_service_factory)):
+    try:
+        return await service.restore_pet(pet_id, is_admin)
+    except PetAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Доступ запрещен. Восстановление удаленных питомцев доступно только администратору."
         )
-
-    result = await db.execute(select(models.Pet).where(models.Pet.id == pet_id, models.Pet.is_active == False))
-    db_pet = result.scalar_one_or_none()
-
-    if db_pet is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Deleted pet with ID {pet_id} not found or already activate"
-        )
-
-    db_pet.is_active = True
-    await db.commit()
-    await db.refresh(db_pet)
-    return db_pet
-
+    except PetRestoreError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)

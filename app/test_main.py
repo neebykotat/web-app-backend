@@ -101,7 +101,7 @@ async def test_read_pets_with_filters(ac: AsyncClient):
 async def test_read_pet_not_found(ac: AsyncClient):
     response = await ac.get("/pets/99999")
     assert response.status_code == 404
-    assert response.json()["detail"] == "Pet with id 99999 not found"
+    assert response.json()["detail"] == "Питомец с ID 99999 не найден."
 
 # Тесты самостоятельная работа №5
 @pytest.mark.anyio
