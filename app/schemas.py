@@ -1,4 +1,5 @@
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+import re
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 from typing import Optional, List
 
 #Схемы тегов
@@ -53,9 +54,25 @@ class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=100, description="Уникальный логин пользователя")
     email: EmailStr = Field(..., description="Электронная почта")
     password: str = Field(..., min_length=6, description="Пароль")
+    password_confirm: str = Field(..., description="Подтверждение пароля")
     full_name: str = Field(..., max_length=255, description="ФИО пользователя")
     phone: Optional[str] = Field(None, max_length=50, description="Телефон для связи")
     is_sitter: bool = Field(False, description="Флаг роли ситтера (по умолчанию клиент)")
+
+    @model_validator(mode='after')
+    def validate_passwords(self) -> 'UserCreate':
+        if self.password != self.password_confirm:
+            raise ValueError("Пароли не совпадают")
+
+        pwd = self.password
+        if not re.search(r"[A-Z]", pwd):
+            raise ValueError("Пароль должен содержать хотя бы одну заглавную букву (A-Z)")
+        if not re.search(r"\d", pwd):
+            raise ValueError("Пароль должен содержать хотя бы одну цифру (0-9)")
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>]", pwd):
+            raise ValueError("Пароль должен содержать хотя бы один специальный символ (!@#$%^&*...)")
+
+        return self
 
 class UserResponse(BaseModel):
     id: int

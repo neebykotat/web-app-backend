@@ -200,3 +200,81 @@ async def test_partial_update_tags_via_patch(ac: AsyncClient):
     assert "tags" in data
     assert len(data["tags"]) == 2
     assert data["tags"][0]["name"] in ["Кастрирован", "Спокойный"]
+
+# Тесты для СР7 (Регистрация и валидация)
+
+@pytest.mark.anyio
+async def test_register_user_success(ac: AsyncClient):
+    """Успешная регистрация нового пользователя"""
+    payload = {
+        "username": "new_unique_user",
+        "email": "unique_email@example.com",
+        "password": "StrongPassword1!",
+        "password_confirm": "StrongPassword1!",
+        "full_name": "Тестовый Пользователь",
+        "phone": "+79998887766",
+        "is_sitter": False
+    }
+    response = await ac.post("/api/v1/auth/register", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["username"] == payload["username"]
+    assert data["email"] == payload["email"]
+    assert "password" not in data
+    assert "hashed_password" not in data
+
+
+@pytest.mark.anyio
+async def test_register_user_duplicate_username(ac: AsyncClient):
+    """Ошибка при попытке зарегистрировать пользователя с уже существующим username"""
+    payload = {
+        "username": "new_unique_user",
+        "email": "another_email@example.com",
+        "password": "StrongPassword1!",
+        "password_confirm": "StrongPassword1!",
+        "full_name": "Дубликат Логина",
+        "is_sitter": False
+    }
+    response = await ac.post("/api/v1/auth/register", json=payload)
+    assert response.status_code == 400
+    assert "логином" in response.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_register_user_duplicate_email(ac: AsyncClient):
+    """Ошибка при попытке зарегистрировать пользователя с уже существующим email"""
+    payload = {
+        "username": "brand_new_username",
+        "email": "unique_email@example.com",
+        "password": "StrongPassword1!",
+        "password_confirm": "StrongPassword1!",
+        "full_name": "Дубликат Почты",
+        "is_sitter": False
+    }
+    response = await ac.post("/api/v1/auth/register", json=payload)
+    assert response.status_code == 400
+    assert "email" in response.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_register_user_weak_password_and_mismatch(ac: AsyncClient):
+    """Ошибка валидации: слабый пароль или несовпадение подтверждения"""
+    payload_mismatch = {
+        "username": "user_pwd_mismatch",
+        "email": "mismatch@example.com",
+        "password": "StrongPassword1!",
+        "password_confirm": "OtherPassword2@",
+        "full_name": "Ошибка Паролей"
+    }
+    response = await ac.post("/api/v1/auth/register", json=payload_mismatch)
+    assert response.status_code == 422
+
+    payload_weak = {
+        "username": "user_weak_pwd",
+        "email": "weak@example.com",
+        "password": "123",
+        "password_confirm": "123",
+        "full_name": "Слабый Пароль"
+    }
+    response = await ac.post("/api/v1/auth/register", json=payload_weak)
+    assert response.status_code == 422
