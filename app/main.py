@@ -4,12 +4,15 @@ from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from typing import List
 
 from database import get_db
 import app.schemas as schemas
 from app.services import get_pet_service
 from app.exceptions import PetNotFoundError, PetAccessDeniedError, PetRestoreError, TagNotFoundError
+from app.auth import hash_password
+from models import User
 
 load_dotenv()
 
@@ -171,3 +174,40 @@ async def read_tag_pets(tag_id: int, service=Depends(pet_service_factory)):
         return await service.get_pets_by_tag(tag_id)
     except TagNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
+
+
+# ПРАКТИЧЕСКАЯ №7
+@app.post("/api/v1/auth/register", response_model=schemas.UserResponse, status_code=status.HTTP_201_CREATED,
+          tags=["Auth"])
+async def register_user(user_data: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
+    """Регистрация нового пользователя (клиента или ситтера в рамках гибридного аккаунта)"""
+    existing_username = await db.execute(select(User).where(User.username == user_data.username))
+    if existing_username.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пользователь с таким логином уже существует."
+        )
+
+    existing_email = await db.execute(select(User).where(User.email == user_data.email))
+    if existing_email.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пользователь с таким email уже зарегистрирован."
+        )
+
+    hashed_pwd = hash_password(user_data.password)
+
+    new_user = User(
+        username=user_data.username,
+        email=user_data.email,
+        hashed_password=hashed_pwd,
+        full_name=user_data.full_name,
+        phone=user_data.phone,
+        is_sitter=user_data.is_sitter
+    )
+
+    db.add(new_user)
+    await db.commit()
+    await db.refresh(new_user)
+
+    return new_user

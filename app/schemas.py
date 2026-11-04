@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from typing import Optional, List
 
 #Схемы тегов
@@ -47,3 +47,22 @@ class PetPartialUpdate(BaseModel):
     age: Optional[int] = None
     description: Optional[str] = None
     tags: Optional[List[str]] = None
+
+# Схемы пользователей
+class UserCreate(BaseModel):
+    username: str = Field(..., min_length=3, max_length=100, description="Уникальный логин пользователя")
+    email: EmailStr = Field(..., description="Электронная почта")
+    password: str = Field(..., min_length=6, description="Пароль")
+    full_name: str = Field(..., max_length=255, description="ФИО пользователя")
+    phone: Optional[str] = Field(None, max_length=50, description="Телефон для связи")
+    is_sitter: bool = Field(False, description="Флаг роли ситтера (по умолчанию клиент)")
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    full_name: str
+    phone: Optional[str] = None
+    is_sitter: bool
+
+    model_config = ConfigDict(from_attributes=True)
