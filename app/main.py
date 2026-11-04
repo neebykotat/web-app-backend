@@ -14,7 +14,7 @@ from database import get_db
 import app.schemas as schemas
 from app.services import get_pet_service
 from app.exceptions import PetNotFoundError, PetAccessDeniedError, PetRestoreError, TagNotFoundError
-from app.auth import hash_password, SECRET_KEY, ALGORITHM, verify_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.auth import hash_password, SECRET_KEY, ALGORITHM, verify_password, create_access_token, create_refresh_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from models import User
 
 load_dotenv()
@@ -55,6 +55,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession
     if user is None:
         raise credentials_exception
     return user
+
+async def get_current_sitter(current_user: User = Depends(get_current_user)) -> User:
+    if not current_user.is_sitter:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Доступ разрешен только для пользователей с ролью ситтера."
+        )
+    return current_user
+
 
 #ПРАКТИЧЕСКАЯ №1
 @app.get("/")
@@ -279,12 +288,58 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": user.username, "is_sitter": user.is_sitter},
+        expires_delta=access_token_expires
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    refresh_token = create_refresh_token(data={"sub": user.username})
 
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer"
+    }
 
 @app.get("/api/v1/users/me", response_model=schemas.UserResponse, tags=["Auth"])
 async def read_users_me(current_user: User = Depends(get_current_user)):
     """Получение информации о текущем авторизованном пользователе"""
     return current_user
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+@app.post("/api/v1/auth/refresh", response_model=schemas.Token, tags=["Auth"])
+async def refresh_access_token(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """Получение нового access-токена по валидному refresh-токену"""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Недействительный или просроченный refresh-токен",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(body.refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "refresh":
+            raise credentials_exception
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalars().first()
+    if user is None:
+        raise credentials_exception
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username, "is_sitter": user.is_sitter},
+        expires_delta=access_token_expires
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": body.refresh_token,
+        "token_type": "bearer"
+    }
