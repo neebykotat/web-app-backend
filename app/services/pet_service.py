@@ -71,25 +71,11 @@ class PetService:
             raise TagNotFoundError(tag_id)
         return tag.pets
 
-    async def create_pet(self, pet_data: schemas.PetCreate) -> models.Pet:
-        user_result = await self.session.execute(select(models.User).where(models.User.id == 1))
-        user_exists = user_result.scalar_one_or_none()
-
-        if not user_exists:
-            default_user = models.User(
-                id=1,
-                email="default@example.com",
-                hashed_password="default_hash",
-                full_name="Тестовый Хозяин",
-                is_sitter=False
-            )
-            self.session.add(default_user)
-            await self.session.flush()
-
+    async def create_pet(self, pet_data: schemas.PetCreate, owner_id: int) -> models.Pet:
         data_dict = pet_data.model_dump()
         tag_names = data_dict.pop("tags", [])
 
-        db_pet = models.Pet(**data_dict, owner_id=1)
+        db_pet = models.Pet(**data_dict, owner_id=owner_id)
 
         if tag_names:
             db_pet.tags = await self._get_or_create_tags(tag_names)

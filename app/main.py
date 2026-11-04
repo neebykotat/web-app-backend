@@ -1,17 +1,20 @@
 import os
 import logging
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List
+from datetime import timedelta
+from jose import jwt, JWTError
 
 from database import get_db
 import app.schemas as schemas
 from app.services import get_pet_service
 from app.exceptions import PetNotFoundError, PetAccessDeniedError, PetRestoreError, TagNotFoundError
-from app.auth import hash_password
+from app.auth import hash_password, SECRET_KEY, ALGORITHM, verify_password, create_access_token, ACCESS_TOKEN_EXPIRE_MINUTES
 from models import User
 
 load_dotenv()
@@ -30,6 +33,28 @@ def log_deletion_activity(pet_id: int):
 
 async def pet_service_factory(db: AsyncSession = Depends(get_db)):
     return get_pet_service(db)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    result = await db.execute(select(User).where(User.username == username))
+    user = result.scalars().first()
+    if user is None:
+        raise credentials_exception
+    return user
 
 #ПРАКТИЧЕСКАЯ №1
 @app.get("/")
@@ -106,32 +131,53 @@ async def read_pet(pet_id: int, service=Depends(pet_service_factory)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
 
 @app.post("/pets/", response_model=schemas.PetResponse, status_code=status.HTTP_201_CREATED, tags=["Pets"])
-async def create_pet(pet: schemas.PetCreate, service=Depends(pet_service_factory)):
-    return await service.create_pet(pet)
+async def create_pet(
+        pet: schemas.PetCreate,
+        current_user: User = Depends(get_current_user),
+        service=Depends(pet_service_factory)):
+    return await service.create_pet(pet, owner_id=current_user.id)
 
 # ПРАКТИЧЕСКАЯ №5 (ПЕРЕРАБОТАНА НА СЕРВИСЫ)
 @app.put("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
-async def update_pet(pet_id: int, pet_data: schemas.PetUpdate, user_id: int, is_admin: bool = False, service=Depends(pet_service_factory)):
+async def update_pet(
+        pet_id: int,
+        pet_data: schemas.PetUpdate,
+        current_user: User = Depends(get_current_user),
+        service=Depends(pet_service_factory)
+):
     try:
-        return await service.update_pet(pet_id, pet_data, user_id, is_admin)
+        is_admin = getattr(current_user, "is_admin", False)
+        return await service.update_pet(pet_id, pet_data, user_id=current_user.id, is_admin=is_admin)
     except PetNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
     except PetAccessDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
 
 @app.patch("/pets/{pet_id}", response_model=schemas.PetResponse, tags=["Pets"])
-async def partial_update_pet(pet_id: int, pet_data: schemas.PetPartialUpdate, user_id: int, is_admin: bool = False, service=Depends(pet_service_factory)):
+async def partial_update_pet(
+        pet_id: int,
+        pet_data: schemas.PetPartialUpdate,
+        current_user: User = Depends(get_current_user),
+        service=Depends(pet_service_factory)
+):
     try:
-        return await service.partial_update_pet(pet_id, pet_data, user_id, is_admin)
+        is_admin = getattr(current_user, "is_admin", False)
+        return await service.partial_update_pet(pet_id, pet_data, user_id=current_user.id, is_admin=is_admin)
     except PetNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=e.message)
     except PetAccessDeniedError as e:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
 
 @app.delete("/pets/{pet_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["Pets"])
-async def delete_pet(pet_id: int, user_id: int, is_admin: bool = False, background_tasks: BackgroundTasks = BackgroundTasks(), service=Depends(pet_service_factory)):
+async def delete_pet(
+        pet_id: int,
+        background_tasks: BackgroundTasks = BackgroundTasks(),
+        current_user: User = Depends(get_current_user),
+        service=Depends(pet_service_factory)
+):
     try:
-        await service.delete_pet(pet_id, user_id, is_admin)
+        is_admin = getattr(current_user, "is_admin", False)
+        await service.delete_pet(pet_id, user_id=current_user.id, is_admin=is_admin)
         background_tasks.add_task(log_deletion_activity, pet_id)
         return None
     except PetNotFoundError as e:
@@ -140,9 +186,14 @@ async def delete_pet(pet_id: int, user_id: int, is_admin: bool = False, backgrou
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=e.message)
 
 @app.post("/pets/{pet_id}/restore", response_model=schemas.PetResponse, tags=["Pets"])
-async def restore_pet(pet_id: int, is_admin: bool = False, service=Depends(pet_service_factory)):
+async def restore_pet(
+        pet_id: int,
+        current_user: User = Depends(get_current_user),
+        service=Depends(pet_service_factory)
+):
     try:
-        return await service.restore_pet(pet_id, is_admin)
+        is_admin = getattr(current_user, "is_admin", False)
+        return await service.restore_pet(pet_id, is_admin=is_admin)
     except PetAccessDeniedError:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -211,3 +262,29 @@ async def register_user(user_data: schemas.UserCreate, db: AsyncSession = Depend
     await db.refresh(new_user)
 
     return new_user
+
+
+@app.post("/api/v1/auth/login", response_model=schemas.Token, tags=["Auth"])
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+    """Аутентификация пользователя и выдача JWT-токена)"""
+    result = await db.execute(select(User).where(User.username == form_data.username))
+    user = result.scalars().first()
+
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверный логин или пароль",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/api/v1/users/me", response_model=schemas.UserResponse, tags=["Auth"])
+async def read_users_me(current_user: User = Depends(get_current_user)):
+    """Получение информации о текущем авторизованном пользователе"""
+    return current_user
