@@ -154,7 +154,16 @@ async def test_delete_pet_forbidden(ac: AsyncClient):
 @pytest.mark.anyio
 async def test_delete_pet_owner_success(ac: AsyncClient):
     token = await get_auth_token(ac)
-    response = await ac.delete("/pets/1", headers={"Authorization": f"Bearer {token}"})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    create_resp = await ac.post(
+        "/pets/",
+        json={"name": "Временный Пёс", "type": "Собака", "age": 3},
+        headers=headers,
+    )
+    pet_id = create_resp.json()["id"]
+
+    response = await ac.delete(f"/pets/{pet_id}", headers=headers)
     assert response.status_code == 204
 
 @pytest.mark.anyio
@@ -290,3 +299,38 @@ async def test_register_user_weak_password_and_mismatch(ac: AsyncClient):
     }
     response = await ac.post("/api/v1/auth/register", json=payload_weak)
     assert response.status_code == 422
+
+# Тесты для Практической работы №9
+
+@pytest.mark.anyio
+async def test_cors_preflight_options_success(ac: AsyncClient):
+    """Проверка preflight OPTIONS-запроса с разрешённого источника"""
+    headers = {
+        "Origin": "http://localhost:3000",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "Content-Type, Authorization",
+    }
+    response = await ac.options("/items/", headers=headers)
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    assert response.headers.get("access-control-allow-credentials") == "true"
+    assert "POST" in response.headers.get("access-control-allow-methods", "")
+
+
+@pytest.mark.anyio
+async def test_cors_get_request_allowed_origin(ac: AsyncClient):
+    """Проверка наличия CORS-заголовков при обычном GET-запросе"""
+    headers = {"Origin": "http://localhost:5173"}
+    response = await ac.get("/status", headers=headers)
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert response.headers.get("access-control-allow-credentials") == "true"
+
+
+@pytest.mark.anyio
+async def test_cors_disallowed_origin(ac: AsyncClient):
+    """Проверка, что для неизвестного домена заголовок Access-Control-Allow-Origin не возвращается"""
+    headers = {"Origin": "http://evil-site.com"}
+    response = await ac.get("/status", headers=headers)
+    assert response.status_code == 200
+    assert "access-control-allow-origin" not in response.headers

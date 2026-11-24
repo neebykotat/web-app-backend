@@ -1,6 +1,7 @@
 import os
 import logging
 from fastapi import FastAPI, Depends, HTTPException, status, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -23,6 +24,20 @@ app = FastAPI(
     title=os.getenv("APP_NAME", "FluffyHost API"),
     description="Автоматизированная веб-платформа индивидуальной передержки домашних животных на основе услуг догситтеров",
     version="0.2.0"
+)
+
+raw_origins = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:5173,http://127.0.0.1:5500"
+)
+allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 logging.basicConfig(level=logging.INFO)
